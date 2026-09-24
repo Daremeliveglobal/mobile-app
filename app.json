@@ -124,7 +124,24 @@
       "GOOGLE_CLIENT_ID": "158183037990-2bou57ddq1nmlt8a57nsn6j5jj01qc51.apps.googleusercontent.com",
       "GOOGLE_EXPO_CLIENT_ID": "",
       "eas": {
-        "projectId": "a9a7c332-ca39-426e-a998-2f473c1eb701"
+        "projectId": "a9a7c332-ca39-426e-a998-2f473c1eb701",
+        "build": {
+          "experimental": {
+            "ios": {
+              "appExtensions": [
+                {
+                  "targetName": "broadcast",
+                  "bundleIdentifier": "com.mobile.daremelive.broadcast",
+                  "entitlements": {
+                    "com.apple.security.application-groups": [
+                      "group.com.mobile.daremelive.appgroup"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        }
       }
     },
     "owner": "daremelive-limited"
