@@ -7,6 +7,7 @@ import { StoreProvider } from '../src/store/Provider';
 import { NotificationProvider } from '../src/context/NotificationContext';
 import { useAuthRouting } from '../src/hooks/useAuthRouting';
 import { useAuthSession } from '../src/hooks/useAuthSession';
+import { useIAPListener } from '../src/hooks/useIAPListener';
 import { I18nextProvider } from 'react-i18next';
 import * as Sentry from '@sentry/react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -25,6 +26,7 @@ function AppLayout() {
   const { isLoading: authLoading } = useAuthSession();
   const [fontsLoaded] = useFonts(fontsToLoad);
   const [languageReady, setLanguageReady] = useState(false);
+  useIAPListener();
 
   // Initialize i18n language preferences
   useEffect(() => {

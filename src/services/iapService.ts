@@ -64,6 +64,7 @@ const PRODUCT_RIZ_AMOUNTS: Record<string, number> = {
 class IAPService {
   private isInitialized = false;
   private products: IAPProduct[] = [];
+  private onCredited: (() => void) | null = null;
   private pendingPurchase: {
     productId: string;
     resolve: (result: IAPPurchaseResult) => void;
@@ -110,6 +111,14 @@ class IAPService {
       logger.error('Failed to initialize IAP Service:', error);
       return false;
     }
+  }
+
+  /**
+   * Called whenever the server credits Riz for a purchase, including ones
+   * StoreKit redelivers at launch after an interrupted purchase.
+   */
+  setOnCredited(callback: (() => void) | null): void {
+    this.onCredited = callback;
   }
 
   /**
@@ -230,6 +239,7 @@ class IAPService {
           if (validation.success) {
             // Finish the transaction
             await InAppPurchases.finishTransactionAsync(purchase, true);
+            this.onCredited?.();
             if (this.pendingPurchase?.productId === purchase.productId) {
               this.resolvePendingPurchase({
                 success: true,
