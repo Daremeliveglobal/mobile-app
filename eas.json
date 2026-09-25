@@ -30,7 +30,8 @@
         "NODE_ENV": "production"
       },
       "ios": {
-        "distribution": "store"
+        "distribution": "store",
+        "image": "macos-sequoia-15.6-xcode-26.0"
       }
     },
     "production-simulator": {
