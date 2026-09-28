@@ -43,8 +43,8 @@
     "expo-dev-client": "~5.2.4",
     "expo-font": "~13.3.1",
     "expo-haptics": "~14.1.4",
+    "expo-iap": "2.8.5",
     "expo-image-picker": "~16.1.4",
-    "expo-in-app-purchases": "^14.5.0",
     "expo-linear-gradient": "~14.1.5",
     "expo-linking": "~7.1.5",
     "expo-router": "~5.1.11",
@@ -108,9 +108,9 @@
   "expo": {
     "autolinking": {
       "android": {
-        "comment": "expo-in-app-purchases is deprecated and its Android sources still use the pre-SDK-50 module API (ExportedModule/@ExpoMethod), which expo-modules-core 2.x removed, so Gradle cannot compile it. Purchases are iOS-only (see src/services/iapService.ts), so Android never loads it — excluding it here keeps the Android build green with no change in behaviour.",
+        "comment": "App Store purchases are iOS-only for now (see src/services/iapService.ts, which only loads expo-iap on iOS). Excluding expo-iap on Android keeps Google Play Billing and its BILLING permission out of the Android app until Android purchases are built.",
         "exclude": [
-          "expo-in-app-purchases"
+          "expo-iap"
         ]
       }
     },

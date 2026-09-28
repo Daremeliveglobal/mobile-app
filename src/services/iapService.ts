@@ -1,15 +1,24 @@
 /**
  * Apple In-App Purchase Service
  *
- * This service handles all Apple IAP operations for purchasing Riz coins.
- * It integrates with StoreKit via expo-in-app-purchases.
+ * Handles all Apple IAP operations for purchasing Riz coins, using StoreKit 2
+ * through expo-iap. Every purchase is confirmed by our server (which checks
+ * Apple's signature on the transaction) before it is finished, so a purchase
+ * interrupted before that point is redelivered by StoreKit on next launch.
  */
 
-import * as InAppPurchases from 'expo-in-app-purchases';
 import { Platform } from 'react-native';
+import type * as ExpoIapModule from 'expo-iap';
+import type { Purchase, PurchaseError } from 'expo-iap';
 import { API_BASE_URL } from '../config/env';
 import { logger } from '../utils/logger';
 import { authenticatedFetch } from '../api/authenticatedFetch';
+
+// expo-iap loads its native module as soon as it is imported, and it is only
+// linked on iOS (see "autolinking" in package.json), so never import it on
+// Android.
+const ExpoIap: typeof ExpoIapModule | null =
+  Platform.OS === 'ios' ? require('expo-iap') : null;
 
 // IAP Product IDs - These must match the products in App Store Connect
 export const IAP_PRODUCT_IDS = {
@@ -30,7 +39,6 @@ export interface IAPProduct {
   title: string;
   description: string;
   price: string;
-  priceAmountMicros: number;
   priceCurrencyCode: string;
   rizAmount: number;
 }
@@ -65,6 +73,10 @@ class IAPService {
   private isInitialized = false;
   private products: IAPProduct[] = [];
   private onCredited: (() => void) | null = null;
+  private subscriptions: { remove: () => void }[] = [];
+  // Transactions currently being confirmed with the server; StoreKit can
+  // deliver the same one through the purchase call and the updates stream.
+  private validating = new Set<string>();
   private pendingPurchase: {
     productId: string;
     resolve: (result: IAPPurchaseResult) => void;
@@ -89,17 +101,21 @@ class IAPService {
     }
 
     // Only initialize on iOS
-    if (Platform.OS !== 'ios') {
+    if (!ExpoIap) {
       return false;
     }
 
     try {
+      // Listen before connecting: StoreKit replays unfinished transactions
+      // as soon as the connection starts.
+      this.subscriptions = [
+        ExpoIap.purchaseUpdatedListener((purchase) => {
+          void this.handlePurchase(purchase);
+        }),
+        ExpoIap.purchaseErrorListener((error) => this.handlePurchaseError(error)),
+      ];
 
-      // Connect to the App Store
-      await InAppPurchases.connectAsync();
-
-      // Set up purchase listener
-      InAppPurchases.setPurchaseListener(this.handlePurchaseUpdate.bind(this));
+      await ExpoIap.initConnection();
 
       this.isInitialized = true;
 
@@ -109,6 +125,8 @@ class IAPService {
       return true;
     } catch (error) {
       logger.error('Failed to initialize IAP Service:', error);
+      this.subscriptions.forEach((subscription) => subscription.remove());
+      this.subscriptions = [];
       return false;
     }
   }
@@ -126,10 +144,12 @@ class IAPService {
    * Call this when the app is closing or IAP is no longer needed
    */
   async disconnect(): Promise<void> {
-    if (!this.isInitialized) return;
+    if (!this.isInitialized || !ExpoIap) return;
 
     try {
-      await InAppPurchases.disconnectAsync();
+      this.subscriptions.forEach((subscription) => subscription.remove());
+      this.subscriptions = [];
+      await ExpoIap.endConnection();
       this.isInitialized = false;
     } catch (error) {
       logger.error('Failed to disconnect IAP Service:', error);
@@ -140,29 +160,25 @@ class IAPService {
    * Fetch available products from the App Store
    */
   async fetchProducts(): Promise<IAPProduct[]> {
-    if (!this.isInitialized) {
+    if (!this.isInitialized || !ExpoIap) {
       return [];
     }
 
     try {
+      const results = await ExpoIap.requestProducts({ skus: ALL_PRODUCT_IDS, type: 'inapp' });
 
-      const { results, responseCode } = await InAppPurchases.getProductsAsync(ALL_PRODUCT_IDS);
-
-      if (responseCode === InAppPurchases.IAPResponseCode.OK && results) {
-        this.products = results.map((product) => ({
-          productId: product.productId,
+      this.products = results
+        .map((product) => ({
+          productId: product.id,
           title: product.title,
           description: product.description,
-          price: product.price,
-          priceAmountMicros: product.priceAmountMicros,
-          priceCurrencyCode: product.priceCurrencyCode,
-          rizAmount: PRODUCT_RIZ_AMOUNTS[product.productId] || 0,
-        }));
+          price: product.displayPrice,
+          priceCurrencyCode: product.currency,
+          rizAmount: PRODUCT_RIZ_AMOUNTS[product.id] || 0,
+        }))
+        .sort((a, b) => a.rizAmount - b.rizAmount);
 
-        return this.products;
-      } else {
-        return [];
-      }
+      return this.products;
     } catch (error) {
       logger.error('Error fetching IAP products:', error);
       return [];
@@ -177,15 +193,27 @@ class IAPService {
   }
 
   /**
+   * The tag Apple attaches to this account's purchases (appAccountToken).
+   * Lets the server refuse a purchase claimed from a different account.
+   */
+  private async getAppAccountToken(): Promise<string | undefined> {
+    try {
+      const response = await authenticatedFetch(`${API_BASE_URL}wallet/`);
+      if (!response.ok) return undefined;
+      const data = await response.json();
+      return typeof data.app_account_token === 'string' ? data.app_account_token : undefined;
+    } catch (error) {
+      logger.error('Could not load App Store account tag:', error);
+      return undefined;
+    }
+  }
+
+  /**
    * Purchase a product
    */
   async purchaseProduct(productId: string): Promise<IAPPurchaseResult> {
-    if (!this.isInitialized) {
+    if (!this.isInitialized || !ExpoIap) {
       return { success: false, error: 'IAP Service not initialized' };
-    }
-
-    if (Platform.OS !== 'ios') {
-      return { success: false, error: 'IAP only available on iOS' };
     }
 
     if (!PRODUCT_RIZ_AMOUNTS[productId]) {
@@ -196,6 +224,8 @@ class IAPService {
       return { success: false, error: 'Another purchase is already in progress' };
     }
 
+    const appAccountToken = await this.getAppAccountToken();
+    const iap = ExpoIap;
 
     return new Promise<IAPPurchaseResult>((resolve) => {
       const timeoutId = setTimeout(() => {
@@ -208,110 +238,136 @@ class IAPService {
 
       this.pendingPurchase = { productId, resolve, timeoutId };
 
-      InAppPurchases.purchaseItemAsync(productId).catch((error: unknown) => {
-        logger.error('Purchase error:', error);
-        const purchaseError = error as { code?: string; message?: string };
-        this.resolvePendingPurchase({
-          success: false,
-          productId,
-          error: purchaseError.code === 'E_USER_CANCELLED'
-            ? 'Purchase cancelled'
-            : purchaseError.message || 'Purchase failed',
-        });
+      // The result arrives through purchaseUpdatedListener / purchaseErrorListener.
+      iap.requestPurchase({
+        request: { ios: { sku: productId, appAccountToken } },
+        type: 'inapp',
+      }).catch((error: unknown) => {
+        this.handlePurchaseError(error as PurchaseError);
       });
     });
   }
 
-  /**
-   * Handle purchase updates from the App Store
-   */
-  private async handlePurchaseUpdate(queryResponse: InAppPurchases.IAPQueryResponse<InAppPurchases.InAppPurchase>): Promise<void> {
-
-    const { responseCode, results } = queryResponse;
-
-    if (responseCode === InAppPurchases.IAPResponseCode.OK && results) {
-      for (const purchase of results) {
-        if (!purchase.acknowledged) {
-
-          // Validate the receipt with our backend
-          const validation = await this.validateReceipt(purchase);
-
-          if (validation.success) {
-            // Finish the transaction
-            await InAppPurchases.finishTransactionAsync(purchase, true);
-            this.onCredited?.();
-            if (this.pendingPurchase?.productId === purchase.productId) {
-              this.resolvePendingPurchase({
-                success: true,
-                transactionId: purchase.orderId,
-                productId: purchase.productId,
-                rizAmount: PRODUCT_RIZ_AMOUNTS[purchase.productId],
-              });
-            }
-          } else {
-            logger.error('Receipt validation failed:', validation.message);
-            // Do not finish a paid transaction that the server has not
-            // validated. StoreKit can redeliver it after a transient outage.
-            if (this.pendingPurchase?.productId === purchase.productId) {
-              this.resolvePendingPurchase({
-                success: false,
-                transactionId: purchase.orderId,
-                productId: purchase.productId,
-                error: validation.message,
-              });
-            }
-          }
-        }
-      }
-    } else if (responseCode === InAppPurchases.IAPResponseCode.USER_CANCELED) {
+  private handlePurchaseError(error: PurchaseError | undefined): void {
+    const code = error?.code;
+    if (code === 'E_USER_CANCELLED') {
       this.resolvePendingPurchase({ success: false, error: 'Purchase cancelled' });
-    } else if (responseCode === InAppPurchases.IAPResponseCode.DEFERRED) {
+    } else if (code === 'E_DEFERRED_PAYMENT' || code === 'E_PENDING') {
       this.resolvePendingPurchase({
         success: false,
         error: 'Purchase is awaiting approval. Your wallet will update after approval.',
       });
     } else {
-      logger.error('Purchase failed with code:', responseCode);
-      this.resolvePendingPurchase({ success: false, error: 'The App Store could not complete this purchase' });
+      logger.error('Purchase failed:', error);
+      this.resolvePendingPurchase({
+        success: false,
+        error: error?.message || 'The App Store could not complete this purchase',
+      });
     }
   }
 
   /**
-   * Validate the receipt with our backend server
+   * Handle a purchase delivered by StoreKit, either from a purchase the user
+   * just made or an unfinished one redelivered at launch.
+   */
+  private async handlePurchase(purchase: Purchase): Promise<void> {
+    if (!ExpoIap) return;
+    const transactionId = purchase.id;
+    if (this.validating.has(transactionId)) return;
+    this.validating.add(transactionId);
+
+    try {
+      const validation = await this.validatePurchase(purchase);
+
+      if (validation.success) {
+        await ExpoIap.finishTransaction({ purchase, isConsumable: true });
+        this.onCredited?.();
+        if (this.pendingPurchase?.productId === purchase.productId) {
+          this.resolvePendingPurchase({
+            success: true,
+            transactionId,
+            productId: purchase.productId,
+            rizAmount: PRODUCT_RIZ_AMOUNTS[purchase.productId],
+          });
+        }
+      } else {
+        logger.error('Purchase validation failed:', validation.message);
+        // Do not finish a paid transaction that the server has not
+        // validated. StoreKit redelivers it after a transient outage.
+        if (this.pendingPurchase?.productId === purchase.productId) {
+          this.resolvePendingPurchase({
+            success: false,
+            transactionId,
+            productId: purchase.productId,
+            error: validation.message,
+          });
+        }
+      }
+    } finally {
+      this.validating.delete(transactionId);
+    }
+  }
+
+  private async postValidation(body: Record<string, string>): Promise<Response> {
+    return authenticatedFetch(`${API_BASE_URL}wallet/validate-apple-receipt/`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+  }
+
+  /**
+   * Have our server confirm the purchase with Apple and credit the Riz.
    * This is CRITICAL for security - never trust the client alone!
    */
-  private async validateReceipt(purchase: InAppPurchases.InAppPurchase): Promise<IAPReceiptValidationResponse> {
+  private async validatePurchase(purchase: Purchase): Promise<IAPReceiptValidationResponse> {
     try {
-      const response = await authenticatedFetch(`${API_BASE_URL}wallet/validate-apple-receipt/`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          receipt_data: purchase.transactionReceipt,
-          product_id: purchase.productId,
-          transaction_id: purchase.orderId, // orderId is the transaction identifier
-        }),
-      });
+      const signedTransaction = purchase.purchaseToken;
+      if (!signedTransaction) {
+        return { success: false, message: 'The App Store did not return a signed transaction' };
+      }
 
-      const data = await response.json();
+      let response = await this.postValidation({
+        signed_transaction: signedTransaction,
+        product_id: purchase.productId,
+        transaction_id: purchase.id,
+      });
+      let data = await response.json();
+
+      // Servers from before StoreKit 2 support only understand the app
+      // receipt. Remove once the server with signed_transaction is live.
+      if (
+        response.status === 400
+        && typeof data.message === 'string'
+        && data.message.startsWith('Missing required fields')
+        && ExpoIap
+      ) {
+        const receipt = await ExpoIap.getReceiptIOS();
+        response = await this.postValidation({
+          receipt_data: receipt,
+          product_id: purchase.productId,
+          transaction_id: purchase.id,
+        });
+        data = await response.json();
+      }
 
       if (response.ok) {
         return {
           success: true,
-          message: data.message || 'Receipt validated successfully',
+          message: data.message || 'Purchase validated successfully',
           coins_added: data.coins_added,
           new_balance: data.new_balance,
           transaction_id: data.transaction_id,
         };
-      } else {
-        return {
-          success: false,
-          message: data.message || data.detail || 'Receipt validation failed',
-        };
       }
+      return {
+        success: false,
+        message: data.message || data.detail || 'Purchase validation failed',
+      };
     } catch (error: any) {
-      logger.error('Receipt validation error:', error);
+      logger.error('Purchase validation error:', error);
       return {
         success: false,
         message: error.message || 'Network error during validation',
@@ -320,29 +376,27 @@ class IAPService {
   }
 
   /**
-   * Restore previous purchases
-   * Useful for when users reinstall the app or get a new device
+   * Retry any purchase that was paid for but never credited (for example if
+   * the app closed mid-purchase). Riz are consumables, so there is nothing
+   * else to restore.
    */
   async restorePurchases(): Promise<boolean> {
-    if (!this.isInitialized) {
+    if (!this.isInitialized || !ExpoIap) {
       return false;
     }
 
     try {
-
-      const { results, responseCode } = await InAppPurchases.getPurchaseHistoryAsync();
-
-      if (responseCode === InAppPurchases.IAPResponseCode.OK && results) {
-
-        // Re-validate each purchase with our backend
-        for (const purchase of results) {
-          await this.validateReceipt(purchase);
-        }
-
-        return true;
+      // StoreKit's full transaction list leaves out consumables once they
+      // are finished, so any Riz purchase in it has not been credited yet.
+      const unfinished = await ExpoIap.getAvailablePurchases({
+        alsoPublishToEventListener: false,
+        onlyIncludeActiveItems: false,
+      });
+      const riz = unfinished.filter((purchase) => PRODUCT_RIZ_AMOUNTS[purchase.productId]);
+      for (const purchase of riz) {
+        await this.handlePurchase(purchase);
       }
-
-      return false;
+      return riz.length > 0;
     } catch (error) {
       logger.error('Error restoring purchases:', error);
       return false;

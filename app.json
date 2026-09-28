@@ -22,7 +22,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.mobile.daremelive",
-      "buildNumber": "54",
+      "buildNumber": "55",
       "icon": "./assets/images/icon.png",
       "splash": {
         "image": "./assets/images/splash-icon.png",
@@ -53,7 +53,7 @@
       "edgeToEdgeEnabled": true,
       "allowBackup": false,
       "package": "com.mobile.app",
-      "versionCode": 53,
+      "versionCode": 54,
       "blockedPermissions": [
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
