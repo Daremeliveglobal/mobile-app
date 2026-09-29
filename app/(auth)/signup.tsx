@@ -12,6 +12,7 @@ import { useSignupMutation } from '../../src/store/authApi';
 import { useDispatch } from 'react-redux';
 import { setPendingEmail, setError } from '../../src/store/authSlice';
 import { useGoogleAuthentication } from '../../src/hooks/useGoogleAuthentication';
+import { AppleSignInButton } from '../../components/AppleSignInButton';
 
 export default function SignupScreen() {
   const [email, setEmail] = useState('');
@@ -244,6 +245,8 @@ export default function SignupScreen() {
         </View>
 
         {/* Google Continue Button */}
+        <AppleSignInButton mode="signup" />
+
         {google.isConfigured && (
         <TouchableOpacity
           className="w-full h-[52px] bg-[#1C1C1E] border border-[#2C2C2E] rounded-full flex-row items-center justify-center mb-8"

@@ -145,6 +145,18 @@ export interface GoogleAuthRequest {
   id_token: string;
 }
 
+export interface AppleAuthRequest {
+  identity_token: string;
+  // Apple only shares the name on the very first sign-in.
+  first_name?: string;
+  last_name?: string;
+}
+
+export interface DeleteAccountRequest {
+  confirm: 'DELETE';
+  reason?: string;
+}
+
 // === Common Response Types ===
 export interface AuthMessageResponse {
   message: string;

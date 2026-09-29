@@ -25,6 +25,8 @@ import type {
   DeactivateAccountRequest,
   LogoutRequest,
   GoogleAuthRequest,
+  AppleAuthRequest,
+  DeleteAccountRequest,
   AuthMessageResponse,
 } from '../../types/api/auth';
 
@@ -189,6 +191,31 @@ export const authApi = createApi({
       invalidatesTags: ['Auth', 'User'],
     }),
 
+    // Permanently delete the account and its personal data
+    deleteAccount: builder.mutation<AuthMessageResponse, DeleteAccountRequest>({
+      query: (data) => ({
+        url: '/users/delete-account/',
+        method: 'POST',
+        body: data,
+      }),
+      invalidatesTags: ['Auth', 'User'],
+    }),
+
+    // Sign in with Apple
+    appleAuth: builder.mutation<AuthResponse, AppleAuthRequest>({
+      queryFn: async (data, _queryApi, _extraOptions) => {
+        // Use publicBaseQuery since this is an unauthenticated endpoint
+        const result = await publicBaseQuery({
+          url: 'auth/apple/',
+          method: 'POST',
+          body: data,
+        }, _queryApi, _extraOptions);
+
+        return result as any;
+      },
+      invalidatesTags: ['Auth', 'User'],
+    }),
+
     // Google OAuth
     googleAuth: builder.mutation<AuthResponse, GoogleAuthRequest>({
       queryFn: async (data, _queryApi, _extraOptions) => {
@@ -258,6 +285,8 @@ export const {
   useUploadProfilePictureMutation,
   useChangePasswordMutation,
   useDeactivateAccountMutation,
+  useDeleteAccountMutation,
+  useAppleAuthMutation,
   useGoogleAuthMutation,
   usePasswordResetRequestMutation,
   usePasswordResetVerifyMutation,
