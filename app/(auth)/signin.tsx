@@ -14,6 +14,7 @@ import { useDispatch } from 'react-redux';
 import { setCredentials } from '../../src/store/authSlice';
 import { markAccountCreated } from '../../src/hooks/useAuthRouting';
 import { useGoogleAuthentication } from '../../src/hooks/useGoogleAuthentication';
+import { AppleSignInButton } from '../../components/AppleSignInButton';
 
 export default function SigninScreen() {
   const [email, setEmail] = useState('');
@@ -199,6 +200,8 @@ export default function SigninScreen() {
             <Text className="text-gray-400 mx-4">or</Text>
             <View className="flex-1 h-px bg-gray-600" />
           </View>
+
+          <AppleSignInButton mode="signin" />
 
           {google.isConfigured && (
           <TouchableOpacity

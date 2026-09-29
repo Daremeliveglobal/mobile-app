@@ -22,7 +22,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.mobile.daremelive",
-      "buildNumber": "55",
+      "buildNumber": "56",
       "icon": "./assets/images/icon.png",
       "splash": {
         "image": "./assets/images/splash-icon.png",
@@ -36,7 +36,8 @@
         "NSMicrophoneUsageDescription": "This app needs access to microphone for live streaming audio.",
         "NSPhotoLibraryUsageDescription": "This app needs access to photo library to let you change your profile picture."
       },
-      "bitcode": false
+      "bitcode": false,
+      "usesAppleSignIn": true
     },
     "android": {
       "icon": "./assets/images/icon.png",
@@ -112,7 +113,8 @@
           "android": {}
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-apple-authentication"
     ],
     "experiments": {
       "typedRoutes": true
